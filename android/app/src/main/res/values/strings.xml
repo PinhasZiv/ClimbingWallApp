@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Spray Wall Route Setter</string>
+    <string name="title_activity_main">Spray Wall Route Setter</string>
+    <string name="package_name">app.climbingwall.routesetter</string>
+    <string name="custom_url_scheme">app.climbingwall.routesetter</string>
+</resources>
