@@ -47,7 +47,7 @@ export default function WallDetail() {
         {routes?.map((route) => (
           <li key={route.id}>
             <Link
-              to={`/routes/${route.id}/view`}
+              to={`/walls/${wall.id}/routes/${route.id}`}
               className="flex items-center justify-between rounded-lg bg-neutral-800 px-3 py-2"
             >
               <span>{route.name}</span>
