@@ -4,16 +4,17 @@ A mobile-first, offline-capable tool for photographing a climbing wall, detectin
 in that photo, and composing boulder problems by tapping holds. Personal, single-user, local
 storage only — no accounts, no backend, no sharing (see [Non-goals](#non-goals-v1)).
 
-Status: **M1 — skeleton**. Routing, storage schema and the Capacitor/Android scaffold are in
-place; capture, detection and the route editor are placeholders being built out milestone by
-milestone (see [Build order](#build-order)).
+Status: **M4 — detection**. Capture, the route editor (zoom/pan/tap/roles), and automatic hold
+detection (OpenCV.js in a Web Worker, with tuning controls and manual correction) all work
+end-to-end. Correction tools beyond add/delete (merge, split, undo/redo) and polish (route
+view, export/import, storage settings) are still ahead (see [Build order](#build-order)).
 
 ## Stack
 
 - React + TypeScript + Vite, built as an installable PWA (offline after first load)
 - Tailwind CSS v4
 - Dexie.js over IndexedDB for storage (`walls`, `routes`, `blobs` tables)
-- OpenCV.js in a Web Worker for hold detection (M4)
+- OpenCV.js in a Web Worker for hold detection — see [DETECTION.md](./DETECTION.md)
 - Wrapped with [Capacitor](https://capacitorjs.com) for an installable Android `.apk`
 
 All camera/file and wake-lock access goes through a thin `src/platform/` adapter module, so

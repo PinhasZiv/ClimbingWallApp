@@ -27,9 +27,9 @@ export default defineConfig({
         ],
       },
       workbox: {
-        // OpenCV.js and photo blobs are large; cache generously and let the
-        // app-level IndexedDB storage (Dexie) hold user data, not the SW cache.
-        maximumFileSizeToCacheInBytes: 15 * 1024 * 1024,
+        // The detection worker bundles OpenCV.js (~15MB) so it works offline after first
+        // load too; give real headroom above that rather than sitting right at a limit.
+        maximumFileSizeToCacheInBytes: 20 * 1024 * 1024,
       },
     }),
   ],

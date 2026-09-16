@@ -31,7 +31,12 @@ jobs:
           distribution: temurin
           java-version: 21
 
-      - uses: android-actions/setup-android@v3
+      # ubuntu-latest ships a preinstalled Android SDK (current platforms/build-tools,
+      # ANDROID_HOME preset) — no separate SDK-install action needed. Just accept licenses;
+      # android-actions/setup-android@v3 additionally tries to install the long-removed
+      # legacy "tools" package and fails on current SDK repos.
+      - name: Accept Android SDK licenses
+        run: yes | ${ANDROID_HOME}/cmdline-tools/*/bin/sdkmanager --licenses > /dev/null || true
 
       - name: Sync Capacitor Android project
         run: npx cap sync android
