@@ -45,6 +45,73 @@ export function polygonArea(polygon: Point[]): number {
   return Math.abs(sum) / 2;
 }
 
+/** Andrew's monotone-chain convex hull. Used for the Merge tool (spec: "convex hull of both polygons"). */
+export function convexHull(points: Point[]): Point[] {
+  const pts = [...new Set(points.map((p) => `${p[0]},${p[1]}`))].map((s) => {
+    const [x, y] = s.split(',').map(Number);
+    return [x, y] as Point;
+  });
+  pts.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  if (pts.length < 3) return pts;
+
+  const cross = (o: Point, a: Point, b: Point) =>
+    (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+
+  const lower: Point[] = [];
+  for (const p of pts) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) {
+      lower.pop();
+    }
+    lower.push(p);
+  }
+  const upper: Point[] = [];
+  for (let i = pts.length - 1; i >= 0; i--) {
+    const p = pts[i];
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) {
+      upper.pop();
+    }
+    upper.push(p);
+  }
+  upper.pop();
+  lower.pop();
+  return lower.concat(upper);
+}
+
+/**
+ * Cut a simple polygon into two by an infinite line through lineA/lineB (Sutherland-Hodgman
+ * style clip against both half-planes). Returns null if the line doesn't actually cross the
+ * polygon into two valid (>=3 vertex) pieces — the Split tool no-ops in that case.
+ */
+export function splitPolygonByLine(polygon: Point[], lineA: Point, lineB: Point): [Point[], Point[]] | null {
+  const side = (p: Point) =>
+    (lineB[0] - lineA[0]) * (p[1] - lineA[1]) - (lineB[1] - lineA[1]) * (p[0] - lineA[0]);
+  const intersect = (p1: Point, p2: Point): Point => {
+    const s1 = side(p1);
+    const s2 = side(p2);
+    const t = s1 / (s1 - s2);
+    return [p1[0] + t * (p2[0] - p1[0]), p1[1] + t * (p2[1] - p1[1])];
+  };
+
+  const left: Point[] = [];
+  const right: Point[] = [];
+  const n = polygon.length;
+  for (let i = 0; i < n; i++) {
+    const curr = polygon[i];
+    const next = polygon[(i + 1) % n];
+    const sCurr = side(curr);
+    const sNext = side(next);
+    if (sCurr >= 0) left.push(curr);
+    if (sCurr <= 0) right.push(curr);
+    if ((sCurr > 0 && sNext < 0) || (sCurr < 0 && sNext > 0)) {
+      const ip = intersect(curr, next);
+      left.push(ip);
+      right.push(ip);
+    }
+  }
+  if (left.length < 3 || right.length < 3) return null;
+  return [left, right];
+}
+
 export function median(values: number[]): number {
   if (values.length === 0) return 0;
   const sorted = [...values].sort((a, b) => a - b);

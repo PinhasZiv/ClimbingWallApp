@@ -98,13 +98,39 @@ TypeScript declarations claim is optional:
   arity genuinely doesn't match, while a "Cannot pass X as a Y" error usually means a missing
   argument shifted everything after it by one position.
 
-## Manual holds and correction (`src/screens/DetectionTuning.tsx`)
+## Manual correction tools (`src/screens/DetectionTuning.tsx`)
 
-Every `Hold` carries `source: 'auto' | 'manual'`. Tapping bare wall adds a manual, fixed-radius
-circular hold (a real snap-to-candidate-mask "Add" tool, per the spec's §7, is M5 work — for
-now it's a plain circle). Tapping an existing hold removes it; if it was `source: 'auto'`, its
-id is recorded in `Wall.deletedAutoIds` so a future re-run doesn't bring it back
-(`src/detection/mergeResults.ts`'s `mergeAutoHolds`).
+Every `Hold` carries `source: 'auto' | 'manual'`. A four-mode toolbar (Add/Delete/Merge/Split)
+plus Undo/Redo:
+
+- **Add.** Tapping bare wall runs `src/lib/floodFill.ts`'s `floodFillHold`: a coarse-grid
+  (4px) flood fill from the tap point, bounded by the same "not wall colour" deltaE test the
+  detector uses, capped at 2% of image area so a fill that "runs away" (a busy, low-contrast
+  photo with no clean edge near the tap) aborts rather than consuming the whole photo. The
+  filled region's convex hull becomes the hold's polygon. Falls back to a fixed-radius circle
+  (`makeCirclePolygon`) when the tap landed on wall-colored pixels or the fill was rejected.
+  Reuses whatever wall colour the last detection run actually used
+  (`ResultMessage.wallLabUsed`), so it stays consistent with the current sensitivity setting
+  without recomputing it.
+- **Delete.** Tap a hold to remove it; drag across the photo to remove every hold the path
+  crosses in one gesture (`PhotoStage`'s `dragMode`/`onDragEnd`).
+- **Merge.** Tap two holds in sequence (the first is highlighted while waiting for the
+  second); the result is the convex hull of both polygons combined (`convexHull` in
+  `src/lib/geometry.ts`), per spec.
+- **Split.** Draw a line across a hold; `splitPolygonByLine` (Sutherland-Hodgman-style
+  half-plane clipping) cuts its polygon into two along that line's infinite extension. Only
+  holds whose bbox overlaps the drawn path are considered, so an unlucky line alignment can't
+  split an unrelated hold elsewhere on the wall.
+
+Any tool that consumes an auto-detected hold (delete, merge, split) records its id in
+`Wall.deletedAutoIds` so a future re-run doesn't bring it back
+(`src/detection/mergeResults.ts`'s `mergeAutoHolds`) — merge/split's *output* holds are always
+`source: 'manual'`, since they no longer reflect what the detector actually produced.
+
+**Undo/redo** (`src/detection/undoStack.ts`) is a 20-deep snapshot stack of
+`{holds, deletedAutoIds}`, recorded before every mutating action (including a re-run, so a bad
+parameter change is undoable too) — not a literal command-object stack, since a snapshot is
+simpler and just as correct at this data size.
 
 ## Where a trained model would slot in (v2)
 

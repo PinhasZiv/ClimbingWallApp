@@ -21,13 +21,18 @@ interface Candidate {
 
 const WATERSHED_SPLIT_AREA_MULTIPLIER = 2.5;
 
+export interface DetectionPipelineResult {
+  holds: DetectRawHold[];
+  wallLabUsed: [number, number, number];
+}
+
 export function runDetectionPipeline(
   cv: CV,
   imageData: ImageData,
   params: DetectionParams,
   wallLabOverride: [number, number, number] | null,
   onProgress: (stage: string) => void,
-): DetectRawHold[] {
+): DetectionPipelineResult {
   const width = imageData.width;
   const height = imageData.height;
   const imageArea = width * height;
@@ -71,7 +76,7 @@ export function runDetectionPipeline(
   for (const c of candidates) c.mask.delete();
   lab.delete();
 
-  return sortHoldsRowMajor(holds);
+  return { holds: sortHoldsRowMajor(holds), wallLabUsed: wallLab };
 }
 
 function sampleBackgroundLab(lab: Mat, width: number, height: number): [number, number, number] {

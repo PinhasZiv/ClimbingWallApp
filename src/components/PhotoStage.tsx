@@ -26,6 +26,10 @@ interface PhotoStageProps {
   children?: (ctx: StageRenderContext) => ReactNode;
   onTap?: (point: Point) => void;
   onLongPress?: (point: Point) => void;
+  /** When true, a single-pointer drag draws a path (delete-across, split-line) instead of panning. */
+  dragMode?: boolean;
+  onDragMove?: (points: Point[]) => void;
+  onDragEnd?: (points: Point[]) => void;
 }
 
 export default function PhotoStage({
@@ -35,6 +39,9 @@ export default function PhotoStage({
   children,
   onTap,
   onLongPress,
+  dragMode = false,
+  onDragMove,
+  onDragEnd,
 }: PhotoStageProps) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
@@ -67,7 +74,7 @@ export default function PhotoStage({
 
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const gesture = useRef<{
-    kind: 'none' | 'tap-candidate' | 'panning' | 'pinching';
+    kind: 'none' | 'tap-candidate' | 'panning' | 'pinching' | 'dragging';
     startX: number;
     startY: number;
     startPanX: number;
@@ -75,6 +82,7 @@ export default function PhotoStage({
     startDist: number;
     startScale: number;
     anchorImage: Point;
+    dragPoints: Point[];
     longPressTimer: ReturnType<typeof setTimeout> | null;
   }>({
     kind: 'none',
@@ -85,6 +93,7 @@ export default function PhotoStage({
     startDist: 0,
     startScale: 1,
     anchorImage: [0, 0],
+    dragPoints: [],
     longPressTimer: null,
   });
 
@@ -113,6 +122,7 @@ export default function PhotoStage({
       g.startY = pos.y;
       g.startPanX = view.panX;
       g.startPanY = view.panY;
+      g.dragPoints = [screenToImage([pos.x, pos.y], view, metrics)];
       g.longPressTimer = setTimeout(() => {
         if (gesture.current.kind === 'tap-candidate') {
           gesture.current.kind = 'none';
@@ -156,30 +166,35 @@ export default function PhotoStage({
       const nextView = { scale: newScale, panX: rawPan.x, panY: rawPan.y };
       const clamped = clampPan(rawPan, nextView, metrics);
       setView({ scale: newScale, panX: clamped.x, panY: clamped.y });
-    } else if (g.kind === 'tap-candidate' || g.kind === 'panning') {
+    } else if (g.kind === 'tap-candidate' || g.kind === 'panning' || g.kind === 'dragging') {
       const dx = pos.x - g.startX;
       const dy = pos.y - g.startY;
       if (g.kind === 'tap-candidate' && Math.hypot(dx, dy) > TAP_MOVE_THRESHOLD_PX) {
-        g.kind = 'panning';
+        g.kind = dragMode ? 'dragging' : 'panning';
         clearLongPressTimer();
       }
       if (g.kind === 'panning') {
         const raw = { x: g.startPanX + dx, y: g.startPanY + dy };
         const clamped = clampPan(raw, view, metrics);
         setView((v) => ({ ...v, panX: clamped.x, panY: clamped.y }));
+      } else if (g.kind === 'dragging') {
+        g.dragPoints.push(screenToImage([pos.x, pos.y], view, metrics));
+        onDragMove?.(g.dragPoints);
       }
     }
   }
 
   function endPointer(e: React.PointerEvent) {
-    const wasTap = gesture.current.kind === 'tap-candidate';
+    const finalKind = gesture.current.kind;
     const pos = pointers.current.get(e.pointerId) ?? relativePos(e);
     pointers.current.delete(e.pointerId);
     clearLongPressTimer();
 
     if (pointers.current.size === 0) {
-      if (wasTap) {
+      if (finalKind === 'tap-candidate') {
         onTap?.(screenToImage([pos.x, pos.y], view, metrics));
+      } else if (finalKind === 'dragging') {
+        onDragEnd?.(gesture.current.dragPoints);
       }
       gesture.current.kind = 'none';
     } else {

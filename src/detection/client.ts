@@ -28,7 +28,7 @@ class DetectionClient {
     params: DetectionParams,
     wallLabOverride: [number, number, number] | null,
     onProgress?: DetectionProgressHandler,
-  ): Promise<{ holds: DetectRawHold[]; elapsedMs: number }> {
+  ): Promise<{ holds: DetectRawHold[]; wallLabUsed: [number, number, number]; elapsedMs: number }> {
     const worker = this.ensureWorker();
     const requestId = this.nextRequestId++;
 
@@ -44,7 +44,7 @@ class DetectionClient {
           onProgress?.(msg.stage);
         } else if (msg.type === 'result') {
           cleanup();
-          resolve({ holds: msg.holds, elapsedMs: msg.elapsedMs });
+          resolve({ holds: msg.holds, wallLabUsed: msg.wallLabUsed, elapsedMs: msg.elapsedMs });
         } else if (msg.type === 'error') {
           cleanup();
           reject(new Error(msg.message));

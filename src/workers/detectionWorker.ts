@@ -25,11 +25,21 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
     const cv = await getCv();
     post({ type: 'progress', requestId: msg.requestId, stage: 'loading OpenCV' });
 
-    const holds = runDetectionPipeline(cv, msg.imageData, msg.params, msg.wallLabOverride, (stage) =>
-      post({ type: 'progress', requestId: msg.requestId, stage }),
+    const { holds, wallLabUsed } = runDetectionPipeline(
+      cv,
+      msg.imageData,
+      msg.params,
+      msg.wallLabOverride,
+      (stage) => post({ type: 'progress', requestId: msg.requestId, stage }),
     );
 
-    post({ type: 'result', requestId: msg.requestId, holds, elapsedMs: performance.now() - start });
+    post({
+      type: 'result',
+      requestId: msg.requestId,
+      holds,
+      wallLabUsed,
+      elapsedMs: performance.now() - start,
+    });
   } catch (err) {
     post({
       type: 'error',

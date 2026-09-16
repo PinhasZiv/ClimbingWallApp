@@ -21,6 +21,7 @@ export interface ResultMessage {
   type: 'result';
   requestId: number;
   holds: DetectRawHold[];
+  wallLabUsed: [number, number, number];
   elapsedMs: number;
 }
 

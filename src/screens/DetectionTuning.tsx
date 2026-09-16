@@ -6,19 +6,24 @@ import HoldShape from '../components/HoldShape';
 import { useWall, updateWall } from '../hooks/useWalls';
 import { getBlob } from '../db/blobs';
 import {
+  convexHull,
   makeCirclePolygon,
   pointInPolygon,
   polygonArea,
   polygonBBox,
+  polygonCentroid,
+  splitPolygonByLine,
   type Point,
 } from '../lib/geometry';
 import { rgbToOpenCvLab8u } from '../lib/color';
+import { floodFillHold } from '../lib/floodFill';
 import { createPixelSampler } from '../lib/pixelSampler';
 import { decodeForDetection, type DetectionImage } from '../lib/decodeForDetection';
 import { DETECTION_MAX_EDGE } from '../lib/constants';
 import { detectionClient } from '../detection/client';
 import { rawHoldsToHolds } from '../detection/toHolds';
 import { mergeAutoHolds } from '../detection/mergeResults';
+import { UndoStack } from '../detection/undoStack';
 import {
   bgDeltaEToSensitivity,
   minAreaFracToSlider,
@@ -27,21 +32,29 @@ import {
 } from '../detection/sliderMapping';
 import type { DetectionParams, Hold } from '../types/models';
 
-/** Manual "Add" fallback when there's no candidate mask to snap to (real snap-to-mask is M5). */
+type ToolMode = 'add' | 'delete' | 'merge' | 'split';
+
+const TOOL_LABELS: { mode: ToolMode; label: string }[] = [
+  { mode: 'add', label: 'Add' },
+  { mode: 'delete', label: 'Delete' },
+  { mode: 'merge', label: 'Merge' },
+  { mode: 'split', label: 'Split' },
+];
+
+/** Fallback when flood-fill finds nothing sensible to snap to (bare wall, or it "runs away"). */
 function manualHoldRadius(imageWidth: number, imageHeight: number): number {
   return Math.max(imageWidth, imageHeight) * 0.035;
 }
 
-function createManualHold(center: Point, radius: number): Hold {
-  const polygon = makeCirclePolygon(center, radius);
+function makeHold(polygon: Point[], source: Hold['source'], meanColorLab: [number, number, number] = [0, 0, 0]): Hold {
   return {
     id: uuid(),
     polygon,
-    centroid: center,
+    centroid: polygonCentroid(polygon),
     bbox: polygonBBox(polygon),
     areaPx: polygonArea(polygon),
-    meanColorLab: [0, 0, 0],
-    source: 'manual',
+    meanColorLab,
+    source,
   };
 }
 
@@ -67,8 +80,15 @@ export default function DetectionTuning() {
   const [pickingColor, setPickingColor] = useState(false);
   const [colorSamples, setColorSamples] = useState<[number, number, number][]>([]);
 
+  const [toolMode, setToolMode] = useState<ToolMode>('add');
+  const [mergeFirstId, setMergeFirstId] = useState<string | null>(null);
+  const [dragPreview, setDragPreview] = useState<Point[] | null>(null);
+  const [, forceUndoRedoRerender] = useState(0);
+
   const detectionImageRef = useRef<DetectionImage | null>(null);
   const pixelSamplerRef = useRef<((x: number, y: number) => [number, number, number]) | null>(null);
+  const lastWallLabRef = useRef<[number, number, number] | null>(null);
+  const undoStackRef = useRef(new UndoStack(20));
   const hasAutoRun = useRef(false);
   const [detectionImageReady, setDetectionImageReady] = useState(false);
 
@@ -116,6 +136,27 @@ export default function DetectionTuning() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wall, params, detectionImageReady]);
 
+  async function applyHoldsUpdate(newHolds: Hold[], newDeletedAutoIds: string[]) {
+    if (!wall) return;
+    undoStackRef.current.record({ holds: wall.holds, deletedAutoIds: wall.deletedAutoIds });
+    forceUndoRedoRerender((n) => n + 1);
+    await updateWall(wall.id, { holds: newHolds, deletedAutoIds: newDeletedAutoIds });
+  }
+
+  async function handleUndo() {
+    if (!wall) return;
+    const restored = undoStackRef.current.undo({ holds: wall.holds, deletedAutoIds: wall.deletedAutoIds });
+    forceUndoRedoRerender((n) => n + 1);
+    if (restored) await updateWall(wall.id, restored);
+  }
+
+  async function handleRedo() {
+    if (!wall) return;
+    const restored = undoStackRef.current.redo({ holds: wall.holds, deletedAutoIds: wall.deletedAutoIds });
+    forceUndoRedoRerender((n) => n + 1);
+    if (restored) await updateWall(wall.id, restored);
+  }
+
   async function runDetection() {
     if (!wall || !params || !detectionImageRef.current) return;
     setIsDetecting(true);
@@ -123,14 +164,17 @@ export default function DetectionTuning() {
     setProgressStage('starting');
     try {
       const wallLabOverride = colorSamples.length > 0 ? averageLab(colorSamples) : null;
-      const { holds: rawHolds } = await detectionClient.detect(
+      const { holds: rawHolds, wallLabUsed } = await detectionClient.detect(
         detectionImageRef.current.imageData,
         params,
         wallLabOverride,
         setProgressStage,
       );
+      lastWallLabRef.current = wallLabUsed;
       const freshAutoHolds = rawHoldsToHolds(rawHolds, detectionImageRef.current.scaleFactor);
       const merged = mergeAutoHolds(wall.holds, wall.deletedAutoIds, freshAutoHolds);
+      undoStackRef.current.record({ holds: wall.holds, deletedAutoIds: wall.deletedAutoIds });
+      forceUndoRedoRerender((n) => n + 1);
       await updateWall(wall.id, {
         holds: merged.holds,
         deletedAutoIds: merged.deletedAutoIds,
@@ -147,6 +191,10 @@ export default function DetectionTuning() {
   if (loading || !params) return <div className="p-4 text-neutral-400">Loading…</div>;
   if (!wall) return <div className="p-4 text-neutral-400">Wall not found.</div>;
 
+  // Narrowed local aliases: TS doesn't propagate the null-checks above into the nested
+  // function declarations below, since they're closures that could in principle run later.
+  const currentParams = params;
+
   function handleTap(point: Point) {
     if (!wall) return;
     if (pickingColor) {
@@ -155,19 +203,117 @@ export default function DetectionTuning() {
       setColorSamples((s) => [...s, rgbToOpenCvLab8u(r, g, b)]);
       return;
     }
+
     const hit = wall.holds.find((h) => pointInPolygon(point, h.polygon));
-    if (hit) {
+
+    if (toolMode === 'add') {
+      if (hit) return;
+      const wallLab = lastWallLabRef.current;
+      const maxPixels = Math.round(wall.photoWidth * wall.photoHeight * 0.02);
+      const polygon =
+        wallLab && pixelSamplerRef.current
+          ? floodFillHold(
+              point,
+              pixelSamplerRef.current,
+              wallLab,
+              currentParams.bgDeltaE,
+              wall.photoWidth,
+              wall.photoHeight,
+              maxPixels,
+            )
+          : null;
+      const newHold = polygon
+        ? makeHold(polygon, 'manual')
+        : makeHold(makeCirclePolygon(point, manualHoldRadius(wall.photoWidth, wall.photoHeight)), 'manual');
+      void applyHoldsUpdate([...wall.holds, newHold], wall.deletedAutoIds);
+      return;
+    }
+
+    if (toolMode === 'delete') {
+      if (!hit) return;
       const nextDeletedAutoIds =
         hit.source === 'auto' ? [...wall.deletedAutoIds, hit.id] : wall.deletedAutoIds;
-      updateWall(wall.id, {
-        holds: wall.holds.filter((h) => h.id !== hit.id),
-        deletedAutoIds: nextDeletedAutoIds,
-      });
-    } else {
-      const radius = manualHoldRadius(wall.photoWidth, wall.photoHeight);
-      updateWall(wall.id, { holds: [...wall.holds, createManualHold(point, radius)] });
+      void applyHoldsUpdate(
+        wall.holds.filter((h) => h.id !== hit.id),
+        nextDeletedAutoIds,
+      );
+      return;
+    }
+
+    if (toolMode === 'merge') {
+      if (!hit) return;
+      if (!mergeFirstId) {
+        setMergeFirstId(hit.id);
+        return;
+      }
+      if (hit.id === mergeFirstId) {
+        setMergeFirstId(null);
+        return;
+      }
+      const first = wall.holds.find((h) => h.id === mergeFirstId);
+      setMergeFirstId(null);
+      if (!first) return;
+      const mergedHold = makeHold(convexHull([...first.polygon, ...hit.polygon]), 'manual');
+      const consumedAutoIds = [first, hit].filter((h) => h.source === 'auto').map((h) => h.id);
+      const remaining = wall.holds.filter((h) => h.id !== first.id && h.id !== hit.id);
+      void applyHoldsUpdate([...remaining, mergedHold], [...wall.deletedAutoIds, ...consumedAutoIds]);
     }
   }
+
+  function handleDragEnd(points: Point[]) {
+    setDragPreview(null);
+    if (!wall || points.length < 2) return;
+
+    if (toolMode === 'delete') {
+      const hitIds = new Set<string>();
+      for (const p of points) {
+        for (const h of wall.holds) {
+          if (pointInPolygon(p, h.polygon)) hitIds.add(h.id);
+        }
+      }
+      if (hitIds.size === 0) return;
+      const nextDeletedAutoIds = [
+        ...wall.deletedAutoIds,
+        ...wall.holds.filter((h) => hitIds.has(h.id) && h.source === 'auto').map((h) => h.id),
+      ];
+      void applyHoldsUpdate(
+        wall.holds.filter((h) => !hitIds.has(h.id)),
+        nextDeletedAutoIds,
+      );
+      return;
+    }
+
+    if (toolMode === 'split') {
+      const lineA = points[0];
+      const lineB = points[points.length - 1];
+      const dragMinX = Math.min(...points.map((p) => p[0]));
+      const dragMaxX = Math.max(...points.map((p) => p[0]));
+      const dragMinY = Math.min(...points.map((p) => p[1]));
+      const dragMaxY = Math.max(...points.map((p) => p[1]));
+
+      for (const hold of wall.holds) {
+        const [bx, by, bw, bh] = hold.bbox;
+        const overlaps = bx <= dragMaxX && bx + bw >= dragMinX && by <= dragMaxY && by + bh >= dragMinY;
+        if (!overlaps) continue;
+        const result = splitPolygonByLine(hold.polygon, lineA, lineB);
+        if (!result) continue;
+        const [polyA, polyB] = result;
+        const nextDeletedAutoIds =
+          hold.source === 'auto' ? [...wall.deletedAutoIds, hold.id] : wall.deletedAutoIds;
+        void applyHoldsUpdate(
+          [
+            ...wall.holds.filter((h) => h.id !== hold.id),
+            makeHold(polyA, 'manual', hold.meanColorLab),
+            makeHold(polyB, 'manual', hold.meanColorLab),
+          ],
+          nextDeletedAutoIds,
+        );
+        return;
+      }
+    }
+  }
+
+  const dragMode = toolMode === 'delete' || toolMode === 'split';
 
   return (
     <div className="flex h-dvh flex-col">
@@ -190,21 +336,42 @@ export default function DetectionTuning() {
             imageWidth={wall.photoWidth}
             imageHeight={wall.photoHeight}
             onTap={handleTap}
+            dragMode={dragMode}
+            onDragMove={dragMode ? setDragPreview : undefined}
+            onDragEnd={dragMode ? handleDragEnd : undefined}
           >
-            {({ totalScale }) =>
-              wall.holds.map((hold) => (
-                <HoldShape
-                  key={hold.id}
-                  hold={hold}
-                  role="unused"
-                  totalScale={totalScale}
-                  showNeutralOutline
-                />
-              ))
-            }
+            {({ totalScale }) => (
+              <>
+                {wall.holds.map((hold) => (
+                  <HoldShape
+                    key={hold.id}
+                    hold={hold}
+                    role="unused"
+                    totalScale={totalScale}
+                    showNeutralOutline
+                    selected={hold.id === mergeFirstId}
+                  />
+                ))}
+                {dragPreview && dragPreview.length > 1 && (
+                  <polyline
+                    points={dragPreview.map(([x, y]) => `${x},${y}`).join(' ')}
+                    fill="none"
+                    stroke={toolMode === 'delete' ? '#ef4444' : '#ffffff'}
+                    strokeWidth={3 / totalScale}
+                    strokeLinecap="round"
+                  />
+                )}
+              </>
+            )}
           </PhotoStage>
         )}
       </div>
+
+      {toolMode === 'merge' && mergeFirstId && (
+        <div className="mx-4 mb-2 rounded-lg bg-blue-900/40 px-3 py-2 text-sm text-blue-100">
+          Tap a second hold to merge with the highlighted one.
+        </div>
+      )}
 
       {pickingColor && (
         <div className="mx-4 mb-2 flex items-center justify-between rounded-lg bg-blue-900/40 px-3 py-2 text-sm text-blue-100">
@@ -226,7 +393,41 @@ export default function DetectionTuning() {
         </div>
       )}
 
-      <div className="flex flex-col gap-3 border-t border-neutral-800 p-4">
+      <div className="flex max-h-[55vh] flex-col gap-3 overflow-y-auto border-t border-neutral-800 p-4">
+        <div className="grid grid-cols-4 gap-2">
+          {TOOL_LABELS.map(({ mode, label }) => (
+            <button
+              key={mode}
+              className={`rounded-lg px-2 py-2 text-sm font-medium ${
+                toolMode === mode ? 'bg-blue-600 text-white' : 'bg-neutral-800'
+              }`}
+              onClick={() => {
+                setToolMode(mode);
+                setMergeFirstId(null);
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex gap-3">
+          <button
+            className="flex-1 rounded-full bg-neutral-800 px-4 py-2 text-sm font-medium disabled:opacity-40"
+            disabled={!undoStackRef.current.canUndo()}
+            onClick={() => void handleUndo()}
+          >
+            Undo
+          </button>
+          <button
+            className="flex-1 rounded-full bg-neutral-800 px-4 py-2 text-sm font-medium disabled:opacity-40"
+            disabled={!undoStackRef.current.canRedo()}
+            onClick={() => void handleRedo()}
+          >
+            Redo
+          </button>
+        </div>
+
         <label className="flex flex-col gap-1 text-sm text-neutral-300">
           <span className="flex justify-between">
             <span>Sensitivity</span>

@@ -4,10 +4,11 @@ A mobile-first, offline-capable tool for photographing a climbing wall, detectin
 in that photo, and composing boulder problems by tapping holds. Personal, single-user, local
 storage only — no accounts, no backend, no sharing (see [Non-goals](#non-goals-v1)).
 
-Status: **M4 — detection**. Capture, the route editor (zoom/pan/tap/roles), and automatic hold
-detection (OpenCV.js in a Web Worker, with tuning controls and manual correction) all work
-end-to-end. Correction tools beyond add/delete (merge, split, undo/redo) and polish (route
-view, export/import, storage settings) are still ahead (see [Build order](#build-order)).
+Status: **M5 — correction tools**. Capture, the route editor (zoom/pan/tap/roles), automatic
+hold detection (OpenCV.js in a Web Worker, with tuning controls), and the full hold-map
+correction toolbar (add via flood-fill, delete/drag-delete, merge, split, 20-deep undo/redo)
+all work end-to-end. Polish — route view with wake lock, export/import, storage settings,
+empty states, an offline check — is what's left (see [Build order](#build-order)).
 
 ## Stack
 
