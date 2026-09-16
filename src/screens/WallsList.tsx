@@ -50,12 +50,17 @@ export default function WallsList() {
     <div className="flex min-h-full flex-col gap-4 p-4">
       <header className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">Walls</h1>
-        <Link
-          to="/capture"
-          className="rounded-full bg-blue-600 px-4 py-2 text-sm font-medium text-white active:bg-blue-700"
-        >
-          + New wall
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link to="/settings" className="rounded-full bg-neutral-800 px-3 py-2 text-sm">
+            Settings
+          </Link>
+          <Link
+            to="/capture"
+            className="rounded-full bg-blue-600 px-4 py-2 text-sm font-medium text-white active:bg-blue-700"
+          >
+            + New wall
+          </Link>
+        </div>
       </header>
 
       {loading && <p className="text-neutral-400">Loading…</p>}

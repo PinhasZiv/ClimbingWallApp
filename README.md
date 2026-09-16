@@ -4,11 +4,9 @@ A mobile-first, offline-capable tool for photographing a climbing wall, detectin
 in that photo, and composing boulder problems by tapping holds. Personal, single-user, local
 storage only — no accounts, no backend, no sharing (see [Non-goals](#non-goals-v1)).
 
-Status: **M5 — correction tools**. Capture, the route editor (zoom/pan/tap/roles), automatic
-hold detection (OpenCV.js in a Web Worker, with tuning controls), and the full hold-map
-correction toolbar (add via flood-fill, delete/drag-delete, merge, split, 20-deep undo/redo)
-all work end-to-end. Polish — route view with wake lock, export/import, storage settings,
-empty states, an offline check — is what's left (see [Build order](#build-order)).
+Status: **v1 complete** (M1–M6, see [Build order](#build-order)). Capture, automatic hold
+detection with a full tuning + correction toolbar, the route editor, a read-only glance view
+with wake lock, and export/import all work end-to-end.
 
 ## Stack
 
@@ -82,6 +80,20 @@ Milestones are shipped in order, each working end-to-end before the next starts:
 
 ## Non-goals (v1)
 
-User accounts/login/server component, sharing/feeds/comments, outdoor climbing/GPS/guidebooks,
-grade consensus, video upload, automatic grade estimation, multi-wall stitching. See the spec
-for the full list and what's planned for v2.
+Deliberately not built: user accounts, login, or any server component; sharing routes between
+users, feeds, comments, or likes; outdoor climbing, GPS, or guidebooks; grade consensus/crowd
+grading; video upload or beta videos; automatic grade estimation; multi-wall stitching or
+panoramas; perspective correction for off-angle photos (the capture flow assumes a
+reasonably square-on shot per the on-screen guidance).
+
+## Future work (v2)
+
+- Swap the classical OpenCV.js detector for a trained instance-segmentation model — the
+  pipeline already sits behind one function (`runDetectionPipeline`, see
+  [DETECTION.md](./DETECTION.md#where-a-trained-model-would-slot-in-v2)) so this is meant to
+  be a drop-in replacement, not a rewrite.
+- Per-route session log: attempts, sends, a free-text reason-for-failure tag.
+- A standalone session counter for technique drills (foot slips, hand re-adjustments).
+- Sharing a route as a rendered image or a deep link.
+- Perspective correction, so an off-angle photo can still be rectified before detection.
+- Filtering routes by which holds they use ("show me everything that uses this crimp").
